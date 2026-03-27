@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: transcription-config
+  namespace: transcription-app
+data:
+  # アプリケーション設定
+  APP_NAME: "Transcription App"
+  APP_ENV: "production"
+  LOG_LEVEL: "info"
+
+  # API設定
+  API_HOST: "0.0.0.0"
+  API_PORT: "8000"
+  API_WORKERS: "4"
+
+  # フロントエンド設定
+  VITE_API_URL: "https://api.transcription-app.example.com"
+
+  # Redis設定
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+
+  # 文字起こしエンジン設定
+  WHISPER_MODEL: "large-v3"
+  DEFAULT_LANGUAGE: "ja"
+
+  # ストレージ設定
+  STORAGE_TYPE: "s3"
+  S3_BUCKET: "transcription-app-storage"
+  S3_REGION: "ap-northeast-1"

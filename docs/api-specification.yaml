@@ -1,0 +1,670 @@
+openapi: 3.1.0
+info:
+  title: 自動文字起こしAPI
+  description: |
+    音声・動画ファイルを文字起こしするためのRESTful API。
+    話者分離、LLM補正、リアルタイム処理などの機能を提供します。
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@transcription-app.example.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.transcription-app.example.com/api/v1
+    description: 本番環境
+  - url: https://staging-api.transcription-app.example.com/api/v1
+    description: ステージング環境
+  - url: http://localhost:8000/api/v1
+    description: ローカル開発環境
+
+tags:
+  - name: transcriptions
+    description: 文字起こし関連
+  - name: analytics
+    description: 分析・レポート
+  - name: teams
+    description: チーム管理
+  - name: vocabulary
+    description: カスタム辞書
+  - name: integrations
+    description: 外部サービス連携
+  - name: developer
+    description: 開発者向けAPI
+
+paths:
+  /transcriptions:
+    get:
+      tags:
+        - transcriptions
+      summary: 文字起こし一覧を取得
+      description: ユーザーの文字起こし一覧を取得します
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, processing, completed, failed]
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [created_at, updated_at, title]
+            default: created_at
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TranscriptionSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    post:
+      tags:
+        - transcriptions
+      summary: 文字起こしを作成
+      description: 新しい文字起こしジョブを作成します
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 音声・動画ファイル
+                title:
+                  type: string
+                  description: タイトル（省略時はファイル名）
+                language:
+                  type: string
+                  default: ja
+                  description: 言語コード
+                enable_speaker_diarization:
+                  type: boolean
+                  default: true
+                  description: 話者分離を有効化
+                enable_llm_correction:
+                  type: boolean
+                  default: true
+                  description: LLM補正を有効化
+                dictionary_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  description: 適用するカスタム辞書ID
+      responses:
+        "202":
+          description: 受付完了
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transcription"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /transcriptions/{id}:
+    get:
+      tags:
+        - transcriptions
+      summary: 文字起こし詳細を取得
+      parameters:
+        - $ref: "#/components/parameters/TranscriptionId"
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transcription"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    patch:
+      tags:
+        - transcriptions
+      summary: 文字起こしを更新
+      parameters:
+        - $ref: "#/components/parameters/TranscriptionId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                tags:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Transcription"
+
+    delete:
+      tags:
+        - transcriptions
+      summary: 文字起こしを削除
+      parameters:
+        - $ref: "#/components/parameters/TranscriptionId"
+      responses:
+        "204":
+          description: 削除完了
+
+  /transcriptions/{id}/export:
+    get:
+      tags:
+        - transcriptions
+      summary: 文字起こしをエクスポート
+      parameters:
+        - $ref: "#/components/parameters/TranscriptionId"
+        - name: format
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [srt, vtt, txt, json, docx, pdf]
+        - name: include_timestamps
+          in: query
+          schema:
+            type: boolean
+            default: true
+        - name: include_speakers
+          in: query
+          schema:
+            type: boolean
+            default: true
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  /transcriptions/{id}/search:
+    get:
+      tags:
+        - transcriptions
+      summary: 文字起こし内を検索
+      parameters:
+        - $ref: "#/components/parameters/TranscriptionId"
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SearchResult"
+
+  /analytics/usage/summary:
+    get:
+      tags:
+        - analytics
+      summary: 使用量サマリーを取得
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageSummary"
+
+  /analytics/dashboard:
+    get:
+      tags:
+        - analytics
+      summary: ダッシュボードデータを取得
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dashboard"
+
+  /teams:
+    get:
+      tags:
+        - teams
+      summary: チーム一覧を取得
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Team"
+
+    post:
+      tags:
+        - teams
+      summary: チームを作成
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTeam"
+      responses:
+        "201":
+          description: 作成完了
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Team"
+
+  /teams/{id}/invite:
+    post:
+      tags:
+        - teams
+      summary: メンバーを招待
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - role
+              properties:
+                email:
+                  type: string
+                  format: email
+                role:
+                  type: string
+                  enum: [owner, admin, member, viewer]
+      responses:
+        "200":
+          description: 招待送信完了
+
+  /vocabulary/dictionaries:
+    get:
+      tags:
+        - vocabulary
+      summary: カスタム辞書一覧を取得
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Dictionary"
+
+    post:
+      tags:
+        - vocabulary
+      summary: カスタム辞書を作成
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDictionary"
+      responses:
+        "201":
+          description: 作成完了
+
+  /developer/api-keys:
+    get:
+      tags:
+        - developer
+      summary: APIキー一覧を取得
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/APIKey"
+
+    post:
+      tags:
+        - developer
+      summary: APIキーを作成
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - scopes
+              properties:
+                name:
+                  type: string
+                scopes:
+                  type: array
+                  items:
+                    type: string
+                expires_in_days:
+                  type: integer
+      responses:
+        "201":
+          description: 作成完了
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/APIKey"
+                  - type: object
+                    properties:
+                      key:
+                        type: string
+                        description: APIキー（この時だけ表示）
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  parameters:
+    TranscriptionId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: リクエストが不正
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: 認証が必要
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: リソースが見つからない
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+
+    TranscriptionSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        audio_duration_sec:
+          type: number
+        created_at:
+          type: string
+          format: date-time
+
+    Transcription:
+      allOf:
+        - $ref: "#/components/schemas/TranscriptionSummary"
+        - type: object
+          properties:
+            segments:
+              type: array
+              items:
+                $ref: "#/components/schemas/Segment"
+            speakers:
+              type: array
+              items:
+                $ref: "#/components/schemas/Speaker"
+            full_text:
+              type: string
+
+    Segment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        start_time_ms:
+          type: integer
+        end_time_ms:
+          type: integer
+        text:
+          type: string
+        speaker_id:
+          type: string
+          format: uuid
+        confidence:
+          type: number
+
+    Speaker:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+        color:
+          type: string
+
+    SearchResult:
+      type: object
+      properties:
+        segment_id:
+          type: string
+          format: uuid
+        text:
+          type: string
+        start_time_ms:
+          type: integer
+        highlight_positions:
+          type: array
+          items:
+            type: object
+            properties:
+              start:
+                type: integer
+              end:
+                type: integer
+
+    UsageSummary:
+      type: object
+      properties:
+        total_transcriptions:
+          type: integer
+        total_duration_sec:
+          type: number
+        total_words:
+          type: integer
+        period_start:
+          type: string
+          format: date
+        period_end:
+          type: string
+          format: date
+
+    Dashboard:
+      type: object
+      properties:
+        monthly_usage:
+          $ref: "#/components/schemas/UsageSummary"
+        weekly_trend:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              transcriptions:
+                type: integer
+              duration_sec:
+                type: number
+        recent_transcriptions:
+          type: array
+          items:
+            $ref: "#/components/schemas/TranscriptionSummary"
+        top_speakers:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              duration_sec:
+                type: number
+
+    Team:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        members_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    CreateTeam:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+
+    Dictionary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        language:
+          type: string
+        words_count:
+          type: integer
+        is_active:
+          type: boolean
+
+    CreateDictionary:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        language:
+          type: string
+          default: ja
+
+    APIKey:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        key_prefix:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+
+security:
+  - bearerAuth: []
+  - apiKeyAuth: []

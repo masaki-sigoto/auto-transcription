@@ -1,0 +1,296 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*"
+
+env:
+  AWS_REGION: ap-northeast-1
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-northeast-1.amazonaws.com
+  EKS_CLUSTER_NAME: transcription-app-eks
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Images
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.ECR_REGISTRY }}/transcription-app/backend
+            ${{ env.ECR_REGISTRY }}/transcription-app/frontend
+            ${{ env.ECR_REGISTRY }}/transcription-app/worker
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ env.ECR_REGISTRY }}/transcription-app/backend:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ env.ECR_REGISTRY }}/transcription-app/frontend:${{ steps.meta.outputs.version }}
+          build-args: |
+            VITE_API_URL=${{ secrets.API_URL }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Worker
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile.worker
+          push: true
+          tags: ${{ env.ECR_REGISTRY }}/transcription-app/worker:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }}-staging --region ${{ env.AWS_REGION }}
+
+      - name: Deploy to Kubernetes
+        run: |
+          # Update image tags
+          cd deploy/kubernetes
+
+          # Apply configmap and secrets
+          kubectl apply -f namespace.yaml
+          kubectl apply -f configmap.yaml
+
+          # Update deployment images
+          kubectl set image deployment/backend \
+            backend=${{ env.ECR_REGISTRY }}/transcription-app/backend:${{ needs.build-and-push.outputs.image-tag }} \
+            -n transcription-app
+
+          kubectl set image deployment/frontend \
+            frontend=${{ env.ECR_REGISTRY }}/transcription-app/frontend:${{ needs.build-and-push.outputs.image-tag }} \
+            -n transcription-app
+
+          kubectl set image deployment/worker \
+            worker=${{ env.ECR_REGISTRY }}/transcription-app/worker:${{ needs.build-and-push.outputs.image-tag }} \
+            -n transcription-app
+
+          # Wait for rollout
+          kubectl rollout status deployment/backend -n transcription-app --timeout=300s
+          kubectl rollout status deployment/frontend -n transcription-app --timeout=300s
+          kubectl rollout status deployment/worker -n transcription-app --timeout=300s
+
+      - name: Run smoke tests
+        run: |
+          STAGING_URL="${{ secrets.STAGING_URL }}"
+
+          # Health check
+          curl -f "${STAGING_URL}/health" || exit 1
+
+          # API check
+          curl -f "${STAGING_URL}/api/v1/health" || exit 1
+
+      - name: Notify Slack
+        if: always()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "Staging deployment ${{ job.status }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Staging Deployment ${{ job.status }}*\n\nCommit: ${{ github.sha }}\nImage: ${{ needs.build-and-push.outputs.image-tag }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-and-push, deploy-staging]
+    environment: production
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+
+      - name: Deploy to Kubernetes
+        run: |
+          cd deploy/kubernetes
+
+          kubectl apply -f namespace.yaml
+          kubectl apply -f configmap.yaml
+          kubectl apply -f secrets.yaml
+          kubectl apply -f service-account.yaml
+          kubectl apply -f network-policy.yaml
+          kubectl apply -f postgres-statefulset.yaml
+          kubectl apply -f redis-statefulset.yaml
+          kubectl apply -f backend-deployment.yaml
+          kubectl apply -f frontend-deployment.yaml
+          kubectl apply -f worker-deployment.yaml
+          kubectl apply -f ingress.yaml
+
+          # Update images
+          kubectl set image deployment/backend \
+            backend=${{ env.ECR_REGISTRY }}/transcription-app/backend:${{ needs.build-and-push.outputs.image-tag }} \
+            -n transcription-app
+
+          kubectl set image deployment/frontend \
+            frontend=${{ env.ECR_REGISTRY }}/transcription-app/frontend:${{ needs.build-and-push.outputs.image-tag }} \
+            -n transcription-app
+
+          kubectl set image deployment/worker \
+            worker=${{ env.ECR_REGISTRY }}/transcription-app/worker:${{ needs.build-and-push.outputs.image-tag }} \
+            -n transcription-app
+
+          # Wait for rollout
+          kubectl rollout status deployment/backend -n transcription-app --timeout=600s
+          kubectl rollout status deployment/frontend -n transcription-app --timeout=600s
+          kubectl rollout status deployment/worker -n transcription-app --timeout=600s
+
+      - name: Run production smoke tests
+        run: |
+          PROD_URL="${{ secrets.PRODUCTION_URL }}"
+
+          # Health check
+          curl -f "${PROD_URL}/health" || exit 1
+
+          # API check
+          curl -f "${PROD_URL}/api/v1/health" || exit 1
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+
+      - name: Notify Slack
+        if: always()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "Production deployment ${{ job.status }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Production Deployment ${{ job.status }}*\n\nVersion: ${{ github.ref_name }}\nImage: ${{ needs.build-and-push.outputs.image-tag }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  rollback:
+    name: Rollback
+    runs-on: ubuntu-latest
+    environment: production
+    if: failure() && needs.deploy-production.result == 'failure'
+    needs: deploy-production
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+
+      - name: Rollback deployments
+        run: |
+          kubectl rollout undo deployment/backend -n transcription-app
+          kubectl rollout undo deployment/frontend -n transcription-app
+          kubectl rollout undo deployment/worker -n transcription-app
+
+          kubectl rollout status deployment/backend -n transcription-app --timeout=300s
+          kubectl rollout status deployment/frontend -n transcription-app --timeout=300s
+          kubectl rollout status deployment/worker -n transcription-app --timeout=300s
+
+      - name: Notify Slack
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": ":warning: Production rollback executed",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*:warning: Production Rollback Executed*\n\nFailed version: ${{ github.ref_name }}\nReason: Deployment failure"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

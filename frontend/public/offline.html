@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>オフライン - VoiceScribe</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background-color: #f9fafb;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .container {
+      text-align: center;
+      max-width: 400px;
+    }
+
+    .icon {
+      width: 80px;
+      height: 80px;
+      margin: 0 auto 24px;
+      background-color: #e5e7eb;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .icon svg {
+      width: 40px;
+      height: 40px;
+      color: #6b7280;
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 600;
+      color: #111827;
+      margin-bottom: 12px;
+    }
+
+    p {
+      font-size: 16px;
+      color: #6b7280;
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+
+    .retry-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px 24px;
+      background-color: #2563eb;
+      color: white;
+      font-size: 16px;
+      font-weight: 500;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    .retry-btn:hover {
+      background-color: #1d4ed8;
+    }
+
+    .retry-btn:active {
+      background-color: #1e40af;
+    }
+
+    .tips {
+      margin-top: 32px;
+      padding: 16px;
+      background-color: #f3f4f6;
+      border-radius: 8px;
+      text-align: left;
+    }
+
+    .tips h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 8px;
+    }
+
+    .tips ul {
+      font-size: 14px;
+      color: #6b7280;
+      padding-left: 20px;
+    }
+
+    .tips li {
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829m-4.243 2.829a4.978 4.978 0 01-1.414-2.83m-1.414 5.658a9 9 0 01-2.167-9.238m7.824 2.167a1 1 0 111.414 1.414m-1.414-1.414L3 3m8.293 8.293l1.414 1.414" />
+      </svg>
+    </div>
+
+    <h1>インターネットに接続されていません</h1>
+    <p>現在オフラインのため、このページを表示できません。接続を確認してもう一度お試しください。</p>
+
+    <button class="retry-btn" onclick="location.reload()">
+      再読み込み
+    </button>
+
+    <div class="tips">
+      <h3>オフラインでもできること</h3>
+      <ul>
+        <li>以前表示したページの閲覧</li>
+        <li>ダウンロード済みの文字起こしデータの確認</li>
+        <li>音声ファイルのアップロード予約（オンライン時に自動送信）</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    // オンラインになったら自動リロード
+    window.addEventListener('online', () => {
+      location.reload();
+    });
+  </script>
+</body>
+</html>
